@@ -179,6 +179,7 @@ class AudioPlayer(QFrame):
         """Load a finalized audio file (after generation completes)."""
         if not path or not os.path.exists(str(path)):
             return self._mark_missing()
+        self._player.stop()
         self._path = str(path)
         self._streaming = False
         self._player.setSource(QUrl.fromLocalFile(self._path))
@@ -195,6 +196,7 @@ class AudioPlayer(QFrame):
         """Start playing a growing WAV immediately during generation."""
         if not path or not os.path.exists(str(path)):
             return False
+        self._player.stop()
         self._path = str(path)
         self._streaming = True
         # Re-attach source so duration/position refresh as the file grows.
