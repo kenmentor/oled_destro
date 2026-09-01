@@ -1,7 +1,7 @@
 import os
 import shutil
 
-from PySide6.QtCore import Qt, QUrl, QRectF, Signal
+from PySide6.QtCore import Qt, QUrl, QRectF, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPainterPath
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -120,6 +120,9 @@ class AudioPlayer(QFrame):
         self._path = None
         self._seeking = False
         self._streaming = False
+        self._stream_timer = QTimer(self)
+        self._stream_timer.setInterval(500)
+        self._stream_timer.timeout.connect(self._on_stream_timeout)
 
         self._build_ui()
         self.apply_styles()
@@ -180,6 +183,7 @@ class AudioPlayer(QFrame):
         if not path or not os.path.exists(str(path)):
             return self._mark_missing()
         self._player.stop()
+        self._stream_timer.stop()
         self._path = str(path)
         self._streaming = False
         self._player.setSource(QUrl.fromLocalFile(self._path))
@@ -203,6 +207,7 @@ class AudioPlayer(QFrame):
         self._player.setSource(QUrl.fromLocalFile(self._path))
         self.label_title.setText(f"{os.path.basename(self._path)}  ·  generating…")
         self.slider.setRange(0, 0)
+        self._stream_timer.start()
         self.play_btn.set_kind("play")
         self.play_btn.set_playing(False)
         self.play()
@@ -309,6 +314,15 @@ class AudioPlayer(QFrame):
     def _on_slider_released(self):
         self._seeking = False
         self._player.setPosition(self.slider.value())
+
+    def _on_stream_timeout(self):
+        if self._streaming and self._path and os.path.exists(self._path):
+            file_size = os.path.getsize(self._path)
+            pcm_size = max(0, file_size - 44)
+            duration_ms = int(pcm_size / (24000 * 1 * 2) * 1000)
+            self.slider.setRange(0, max(0, duration_ms))
+            if self._player.position() > duration_ms and duration_ms > 0:
+                self._player.setPosition(0)
 
     def apply_styles(self):
         self.setStyleSheet(f"""

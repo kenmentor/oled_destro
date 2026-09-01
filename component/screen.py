@@ -259,19 +259,37 @@ class Screen1(QFrame):
             filter="Documents (*.pdf *.docx *.txt);;All Files (*)"
         )
         if file_path:
-            self.updateprogress(f"Processing: {os.path.basename(file_path)}...")
-            show_info(self.window(), f"Extracting text from {os.path.basename(file_path)}...")
+            self.updateprogress(f"Loading: {os.path.basename(file_path)}...")
+            bar = self._progress_bar()
+            if bar is not None:
+                bar.show()
+                bar.setRange(0, 0)
+                bar.setTextVisible(False)
+                bar.setValue(0)
             worker = ModelTask(document_tool.process_document, file_path)
             worker.signals.finished.connect(self.loadText)
-            worker.signals.error.connect(lambda err: show_error(self.window(), f"Could not read document:\n{err}"))
+            worker.signals.error.connect(lambda err: self._on_load_error(err))
             self.threadpool.start(worker)
-            
+
+    def _on_load_error(self, err):
+        bar = self._progress_bar()
+        if bar is not None:
+            bar.hide()
+            bar.setRange(0, 1)
+            bar.setValue(0)
+        show_error(self.window(), f"Could not read document:\n{err}")
+
     @Slot()
     def update_document_text(self):
         text = self.editor.toPlainText()
         document_tool.update_text(text)
-        
+
     def loadText(self, text=""):
+        bar = self._progress_bar()
+        if bar is not None:
+            bar.hide()
+            bar.setRange(0, 1)
+            bar.setValue(0)
         self.editor.setPlainText(text)
         show_success(self.window(), f"Document loaded ({len(text or '')} characters)")
 

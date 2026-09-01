@@ -205,13 +205,13 @@ class Worker(QObject):
             writer.finalize()
 
         if cancelled:
-            # Partially generated file is not registered in the library.
-            try:
-                os.remove(out_path)
-            except OSError:
-                pass
-            if signals:
-                signals.progress.emit("Generation cancelled")
+            if writer.has_data:
+                database.add(out_path)
+                if signals:
+                    signals.progress.emit("Generation cancelled — partial audio saved")
+            else:
+                if signals:
+                    signals.progress.emit("Generation cancelled")
             return None
 
         if writer.has_data:
