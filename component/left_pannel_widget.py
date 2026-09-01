@@ -56,6 +56,7 @@ class leftPannel(QFrame):
         self.progress_bar.setFixedHeight(10) 
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setValue(0)
+        self.progress_bar.hide()
         
         self.select_voice = QComboBox()
         self.select_voice.setObjectName("VoiceDropdown")
@@ -125,6 +126,7 @@ class leftPannel(QFrame):
         STATEDB.model = model
         self.loadVoice()
         # Show immediate feedback: indeterminate spinner while engine reloads.
+        self.progress_bar.show()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setTextVisible(False)
         self.model_reload_request.emit(model)
@@ -134,6 +136,7 @@ class leftPannel(QFrame):
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(1 if ok else 0)
         self.loadVoice()
+        self.progress_bar.hide()
 
     def loadVoice(self):
         model = STATEDB.model

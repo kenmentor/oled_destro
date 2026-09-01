@@ -118,19 +118,10 @@ class VoiceStudio(QFrame):
         row.addWidget(self.clip_time)
         layout.addLayout(row)
 
-        devices = QMediaDevices().audioInputs()
-        if not devices:
-            self.btn_record.setEnabled(False)
-            layout.addWidget(QLabel("No microphone detected on this system."))
-
-        self._player = QMediaPlayer(self)
-        self._player_output = QAudioOutput(self)
-        self._player_output.setVolume(0.9)
-        self._player.setAudioOutput(self._player_output)
-        self._player.playbackStateChanged.connect(self._on_preview_state)
-        self._player.durationChanged.connect(
-            lambda d: self.clip_time.setText(format_time(d))
-        )
+        # Audio player is created lazily so the splash never freezes.
+        self._audio_ready = False
+        self._player = None
+        self._player_output = None
 
         return card
 
@@ -189,6 +180,24 @@ class VoiceStudio(QFrame):
         return card
 
     # ------------------------------------------------------------ recording --
+    def _ensure_audio(self):
+        """Create the preview player lazily so the splash never freezes."""
+        if self._audio_ready:
+            return
+        self._audio_ready = True
+        if self._player is None:
+            self._player = QMediaPlayer(self)
+            self._player_output = QAudioOutput(self)
+            self._player_output.setVolume(0.9)
+            self._player.setAudioOutput(self._player_output)
+            self._player.playbackStateChanged.connect(self._on_preview_state)
+            self._player.durationChanged.connect(
+                lambda d: self.clip_time.setText(format_time(d))
+            )
+        devices = QMediaDevices().audioInputs()
+        if not devices:
+            self.btn_record.setEnabled(False)
+
     def toggle_record(self):
         if self._recording:
             self.stop_record()
@@ -265,6 +274,7 @@ class VoiceStudio(QFrame):
             self._load_clip(path, source="import")
 
     def _load_clip(self, path, source=""):
+        self._ensure_audio()
         self._clip_path = os.path.abspath(path)
         self._clip_source = source
         self.clip_label.setText(f"{os.path.basename(path)} ({source})")
@@ -288,6 +298,7 @@ class VoiceStudio(QFrame):
         self.btn_create.setEnabled(True)
 
     def toggle_preview(self):
+        self._ensure_audio()
         if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self._player.pause()
         else:

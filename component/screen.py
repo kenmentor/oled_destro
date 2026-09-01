@@ -19,7 +19,7 @@ utils = Utils()
 stateBase = jsonDB()
 
 class Screen1(QFrame):
-    def __init__(self):
+    def __init__(self, audio_player=None):
         super().__init__()
         self.setObjectName("Screen1")
         
@@ -50,7 +50,7 @@ class Screen1(QFrame):
         self.header_layout.addStretch()
         self.header_layout.addWidget(self.btn_home)
         
-        self.Audio_player = AudioPlayer()
+        self.Audio_player = audio_player if audio_player is not None else AudioPlayer()
 
         self.editor = TextEdit()
         self.editor.setObjectName("MainEditor")
@@ -82,11 +82,14 @@ class Screen1(QFrame):
         self.root_layout.addWidget(self.footer)
         self.root_layout.addWidget(self.editor, stretch=1)
         self.root_layout.addWidget(self.Audio_player)
-        
+
+        # Optional shared music-player overlay (injected by main_window).
+        self._pending_model = None
 
         # --- Threading Setup ---
         self.threadpool = QThreadPool.globalInstance()
         self.init_engine_worker()
+        import sys; print("[screen1] init done", flush=True)
         
         self.apply_styles()
 
@@ -200,6 +203,7 @@ class Screen1(QFrame):
         self.loader.moveToThread(self.engine_thread)
         self.engine_thread.started.connect(self.loader.worker_job) 
         self.loader.progress.connect(self.status_label.setText)
+        self.loader.progress.connect(self._on_loader_progress)
         self.loader.finished.connect(self.on_engine_ready)
         self.engine_thread.start()
 
@@ -219,15 +223,32 @@ class Screen1(QFrame):
 
     def bind_progress_bar(self, bar):
         self._progress_target = bar
+        bar.hide()
 
     def _progress_bar(self):
         return self._progress_target
+
+    def _on_loader_progress(self, msg):
+        """Show/hide the progress bar to reflect the app loading state."""
+        bar = self._progress_bar()
+        if bar is None:
+            return
+        if "Loading" in msg:
+            bar.show()
+            bar.setRange(0, 0)
+            bar.setTextVisible(False)
+            bar.setValue(0)
+        elif "Ready" in msg:
+            bar.hide()
+            bar.setRange(0, 1)
+            bar.setValue(0)
 
     def updateProgressCounter(self, count):
         print(f"[updateProgressCounter]->count {count}")
         bar = self._progress_bar()
         if bar is None:
             return
+        bar.show()
         bar.setRange(0, 100)
         bar.setTextVisible(False)
         bar.setValue(count)
@@ -253,6 +274,13 @@ class Screen1(QFrame):
     def loadText(self, text=""):
         self.editor.setPlainText(text)
         show_success(self.window(), f"Document loaded ({len(text or '')} characters)")
+
+    def _set_generate_mode(self, normal=True):
+        """Reset the Generate/Cancel button to a known idle state."""
+        self.btn_continue.set_text("Generate Audio")
+        self.btn_continue.set_generate_mode(True)
+        self.btn_continue.setEnabled(True)
+        self._generating = False
 
     def toggle_generate(self):
         """Runs generation, or cancels an in-progress run (button turns red)."""
@@ -306,9 +334,17 @@ class Screen1(QFrame):
         self.threadpool.start(worker)
 
     def cancel_generation(self):
-        if getattr(self, "_cancel_event", None) is not None:
-            self._cancel_event.set()
-            self.updateprogress("Cancelling…")
+        # Guard: only act if a generation is actually in progress.
+        if not getattr(self, "_generating", False):
+            return
+        if getattr(self, "_cancel_event", None) is None:
+            return
+        self._cancel_event.set()
+        self._generating = False
+        self.btn_continue.set_text("Cancelling…")
+        self.btn_continue.setEnabled(False)
+        self.updateprogress("Cancelling…")
+        show_info(self.window(), "Cancelling generation…")
 
     def on_synthesis_chunk_ready(self, path):
         """Start playing the growing WAV as soon as the first audio is written."""
@@ -319,10 +355,16 @@ class Screen1(QFrame):
         if bar is not None:
             bar.setValue(0)
             bar.setRange(0, 1)
+            bar.hide()
         self._generating = False
         self.btn_continue.set_text("Generate Audio")
         self.btn_continue.set_generate_mode(True)
         self.btn_continue.setEnabled(True)
+        # Apply a model switch that was requested while generating.
+        pending = getattr(self, "_pending_model", None)
+        if pending:
+            self._pending_model = None
+            self.loader.switch_model(pending)
         # Reclaim RAM. Kokoro/pytorch grows slightly on every run (known leak,
         # #152) and the slowdown tracks memory growth - so periodically rebuild
         # the engine to reset it and keep generation fast.

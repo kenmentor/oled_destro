@@ -313,7 +313,6 @@ class AudioPlayer(QFrame):
             #AudioPlayer {{
                 background-color: {CARD_BG};
                 border: 1px solid {BORDER};
-                border-radius: 10px;
             }}
             QLabel#TrackLabel {{
                 color: {TEXT};
@@ -329,11 +328,9 @@ class AudioPlayer(QFrame):
             QSlider#SeekSlider::groove:horizontal {{
                 height: 3px;
                 background: {BORDER};
-                border-radius: 1px;
             }}
             QSlider#SeekSlider::sub-page:horizontal {{
                 background: {ACCENT};
-                border-radius: 1px;
             }}
             QSlider#SeekSlider::handle:horizontal {{
                 background: {TEXT};
