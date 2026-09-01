@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Generated outputs & runtime audio
+outputs/
+output
+outfile.wav
+output.wav
+outfile*
+*.wav
+!modules/voices/pocket/*.wav
+!asset/**/*.wav
+
+# Large runtime model / voice binaries (re-downloadable)
+modules/kokoro-v1_0.pth
+modules/voices/*.pt
+models/
+
+# Databases & state (device specific)
+storage.db
+modules/storage.db
+storage/
+
+# Scratch
+test.py
+test2.py
+boot_test*.py
+audio
+audios

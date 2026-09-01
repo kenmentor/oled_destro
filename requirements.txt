@@ -1,0 +1,17 @@
+# OLED-DESTRO Python Sidecar Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core TTS
+kokoro>=0.3.0
+torch>=2.0.0
+
+# PDF text extraction
+PyMuPDF>=1.23.0
+pymupdf4llm>=0.0.5
+
+# Audio handling
+numpy>=1.24.0
+soundfile>=0.12.0
+
+# Build tool
+pyinstaller>=6.0.0
