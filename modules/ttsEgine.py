@@ -59,6 +59,7 @@ class POCKET(MODEL):
 
     def __init__(self, device=None):
         self.tts_model = TTSModel.load_model()
+        self.tts_model.has_voice_cloning = True
         self.default_voice = self._first_available()
         self._voice_state_cache = {}
 
