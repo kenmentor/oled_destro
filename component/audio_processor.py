@@ -35,9 +35,13 @@ class StreamingWavWriter:
     def append(self, pcm_bytes: bytes):
         if self._closed:
             return
+        new_size = self._pcm_bytes_written + len(pcm_bytes)
+        with open(self.path, "r+b") as f:
+            f.seek(40)
+            struct.pack_into("<I", f, 0, new_size)
         with open(self.path, "ab") as f:
             f.write(pcm_bytes)
-        self._pcm_bytes_written += len(pcm_bytes)
+        self._pcm_bytes_written = new_size
 
     def finalize(self):
         """Rewrite the header with the actual byte counts and close."""
