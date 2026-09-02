@@ -4,16 +4,16 @@ from component.left_pannel_widget import leftPannel
 from component.screen import Screen1
 from component.toast import show_info
 from component.audioplayer import AudioPlayer
-from PySide6.QtCore import Qt
-from component.voice_screen import VoiceStudio
-from component.history_screen import HistoryScreen
-from component.plugin_screen import PluginScreen
-from component.models import ModelScreen
+from PySide6.QtCore import Qt, QTimer
 
 
 class mainWindow(QMainWindow):
     def __init__(self, app):
         super().__init__()
+        import time as _t
+        _t0 = _t.monotonic()
+        def _m(label):
+            print(f"[build] {label}: {_t.monotonic()-_t0:6.2f}s", flush=True)
         self.setWindowTitle("Oled DESTRO")
         self.resize(1200, 800)
 
@@ -31,8 +31,10 @@ class mainWindow(QMainWindow):
         top_layout.setSpacing(0)
 
         self.sidebar = SideBar()
+        _m("sidebar")
         app.processEvents()
         self.leftPannel = leftPannel()
+        _m("leftPannel")
         app.processEvents()
 
         self.sidebar.nav_request.connect(self.route_to_screen)
@@ -40,29 +42,25 @@ class mainWindow(QMainWindow):
         self.content_stack = QStackedWidget()
         self.content_stack.setObjectName("ContentStack")
 
-        # Shared music-player overlay — spans full width and is present on every screen.
+        # Shared music-player overlay — spans full width and present on every screen.
         self.music_player = AudioPlayer()
+        _m("audioplayer")
 
         #  0 = home   1 = history   2 = plugin   3 = model   4 = voice
+        # Only create home immediately; other screens are lazy-loaded on first navigation.
         self.home = Screen1(self.music_player)
-        import sys; print("[mainwindow] home built", flush=True)
-        self.history = HistoryScreen()
-        import sys; print("[mainwindow] history built", flush=True)
-        self.pluginScreeen = PluginScreen()
-        import sys; print("[mainwindow] plugin built", flush=True)
-        self.ModelScreen = ModelScreen()
-        import sys; print("[mainwindow] model built", flush=True)
-        self.voice = VoiceStudio()
-        import sys; print("[mainwindow] voice built", flush=True)
+        _m("home")
+
+        self._history = None
+        self._plugin = None
+        self._model = None
+        self._voice = None
 
         self.content_stack.addWidget(self.home)
-        self.content_stack.addWidget(self.history)
-        self.content_stack.addWidget(self.pluginScreeen)
-        self.content_stack.addWidget(self.ModelScreen)
-        self.content_stack.addWidget(self.voice)
 
         # History rows can play their audio in the home-screen player.
-        self.history.play_audio.connect(self.home.Audio_player.load)
+        self._get_history()
+        _m("history")
 
         top_layout.addWidget(self.sidebar)
         top_layout.addWidget(self.content_stack)
@@ -82,6 +80,35 @@ class mainWindow(QMainWindow):
         app.processEvents()
         print("[mainwindow] init done", flush=True)
 
+    def _get_history(self):
+        if self._history is None:
+            from component.history_screen import HistoryScreen
+            self._history = HistoryScreen()
+            self._history.play_audio.connect(self.home.Audio_player.load)
+            self.content_stack.insertWidget(1, self._history)
+        return self._history
+
+    def _get_plugin(self):
+        if self._plugin is None:
+            from component.plugin_screen import PluginScreen
+            self._plugin = PluginScreen()
+            self.content_stack.insertWidget(2, self._plugin)
+        return self._plugin
+
+    def _get_model(self):
+        if self._model is None:
+            from component.models import ModelScreen
+            self._model = ModelScreen()
+            self.content_stack.insertWidget(3, self._model)
+        return self._model
+
+    def _get_voice(self):
+        if self._voice is None:
+            from component.voice_screen import VoiceStudio
+            self._voice = VoiceStudio()
+            self.content_stack.insertWidget(4, self._voice)
+        return self._voice
+
     def _on_model_reload_request(self, model_name):
         if getattr(self.home, "_generating", False):
             self.home._pending_model = model_name
@@ -92,6 +119,15 @@ class mainWindow(QMainWindow):
 
     def route_to_screen(self, target_index):
         print("[route_to_screen]->", target_index)
+        # Ensure the target screen exists before switching
+        if target_index == 1:
+            self._get_history()
+        elif target_index == 2:
+            self._get_plugin()
+        elif target_index == 3:
+            self._get_model()
+        elif target_index == 4:
+            self._get_voice()
         self.content_stack.setCurrentIndex(target_index)
         # The configuration sidebar only belongs on the home screen.
         self.leftPannel.setVisible(target_index == 0)
@@ -105,6 +141,22 @@ class mainWindow(QMainWindow):
         if splash is not None:
             splash.close_with_fade(self, after_ms=250)
 
+    def showEvent(self, event):
+        """Start loading the TTS engine only once the UI is fully shown/usable."""
+        super().showEvent(event)
+        if not getattr(self, "_engine_started", False):
+            self._engine_started = True
+            QTimer.singleShot(200, self.start_engine_loading)
+
+    def start_engine_loading(self):
+        """Start loading the TTS engine after the UI is responsive."""
+        home = self.home
+        # Progress text → status label; numeric step → determinate 0-100% bar.
+        home.loader.progress.connect(home.status_label.setText)
+        home.loader.finished.connect(home.on_engine_ready)
+        # Start the engine thread
+        home.init_engine_worker()
+
     def apply_styles(self):
         self.setStyleSheet("""
             #MainWindow { background-color: #0A0A0A; }
@@ -114,5 +166,9 @@ class mainWindow(QMainWindow):
                 font-family: 'Inter', 'Segoe UI', sans-serif;
                 font-size: 14px;
                 color: #2D3436;
+            }
+            /* No ugly focus rectangle when clicking buttons/combos. */
+            QPushButton:focus, QComboBox:focus, QListView:focus {
+                outline: none;
             }
         """)

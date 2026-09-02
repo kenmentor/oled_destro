@@ -2,7 +2,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
 from PySide6.QtWidgets import QApplication
 
 app = QApplication(sys.argv)
@@ -21,15 +21,20 @@ class Preloader(QThread):
 
     ready = Signal()
     failed = Signal(str)
+    # Real progress (0-100) + status text while the splash is showing
+    progress = Signal(int, str)
 
     def run(self):
         try:
+            self.progress.emit(5, "Importing ML libraries (slow first run)...")
             import torch
             _mark("torch imported")
             torch.set_num_threads(os.cpu_count() or 4)
             torch.set_num_interop_threads(1)
+            self.progress.emit(45, "Importing AI engine...")
             import widgets.main_widget  # noqa: F401
             _mark("widgets imported")
+            self.progress.emit(80, "Building interface...")
             self.ready.emit()
         except Exception as e:
             self.failed.emit(repr(e))
@@ -47,6 +52,7 @@ class StartupController(QObject):
         self.preloader = Preloader()
         self.preloader.ready.connect(self._build)
         self.preloader.failed.connect(self._failed)
+        self.preloader.progress.connect(self.splash.set_progress)
         self.preloader.start()
 
     @Slot()
@@ -56,11 +62,10 @@ class StartupController(QObject):
 
         self.window = mainWindow(app)
         _mark("window built")
-        home = self.window.home
-        # Bind the splash so the engine-ready signal can close it.
-        self.window._splash = self.splash
-        home.loader.progress.connect(self.splash.set_status)
-        home.loader.finished.connect(self.window.finish_startup)
+        # Splash reflects 100% once the window is fully constructed; the engine
+        # loads after the window is shown, triggered by its show event.
+        self.splash.set_progress(100, "Ready")
+        self.splash.close_with_fade(self.window, after_ms=100)
 
     @Slot(str)
     def _failed(self, message):

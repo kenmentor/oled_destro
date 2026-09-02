@@ -2,10 +2,11 @@ import os
 import shutil
 
 from PySide6.QtCore import Qt, QUrl, QRectF, Signal, QTimer
-from PySide6.QtGui import QColor, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QIcon
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QSlider, QVBoxLayout, QInputDialog
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QSlider, QVBoxLayout,
+    QInputDialog, QStyle
 )
 
 
@@ -25,16 +26,27 @@ ACCENT = "#E4E4E7"   # monochrome accent (white/gray)
 
 
 class IconButton(QFrame):
-    """A slim monochrome round icon button; glyph drawn via QPainter."""
+    """A round icon button using Qt's built-in standard icons, with hover and
+    press feedback (no focus rectangle)."""
     clicked = Signal()
+
+    # kind -> standard pixmap (play/stop/download use built-ins; menu is drawn)
+    _STD = {
+        "play": QStyle.StandardPixmap.SP_MediaPlay,
+        "stop": QStyle.StandardPixmap.SP_MediaStop,
+        "download": QStyle.StandardPixmap.SP_DialogSaveButton,
+    }
 
     def __init__(self, parent=None, size=34, kind="play"):
         super().__init__(parent)
         self.setFixedSize(size, size)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setObjectName("IconButton")
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._playing = False
         self._kind = kind
+        self._hover = False
+        self._pressed = False
 
     def set_playing(self, playing: bool):
         if self._playing != playing:
@@ -47,57 +59,78 @@ class IconButton(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self.update()
+            # Pulse back to idle so the user sees they clicked.
+            QTimer.singleShot(130, self._release_press)
             self.clicked.emit()
             event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def _release_press(self):
+        if self._pressed:
+            self._pressed = False
+            self.update()
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self._pressed = False
+        self.update()
+        super().leaveEvent(event)
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
 
-        p.setBrush(QColor(CARD_BG))
-        p.setPen(QColor(BORDER))
+        # Background: idle -> hover -> pressed (subtle monochrome ramp).
+        bg = CARD_BG
+        border = BORDER
+        if self._pressed:
+            bg, border = "#25252A", ACCENT
+        elif self._hover:
+            bg, border = "#1B1B1F", "#3A3A40"
+
+        p.setBrush(QColor(bg))
+        p.setPen(QColor(border))
         p.drawEllipse(r)
         p.setPen(Qt.PenStyle.NoPen)
 
         cx, cy = r.center().x(), r.center().y()
-        p.setBrush(QColor(TEXT))
+        scale = 1.10 if self._pressed else 1.0
 
-        if self._kind == "play":
-            s = r.width() * 0.26
-            tri = QPainterPath()
-            tri.moveTo(cx - s * 0.5, cy - s)
-            tri.lineTo(cx - s * 0.5, cy + s)
-            tri.lineTo(cx + s * 1.05, cy)
-            tri.closeSubpath()
-            p.drawPath(tri)
-        elif self._kind == "stop":
-            s = r.width() * 0.2
-            p.drawRect(QRectF(cx - s, cy - s, s * 2, s * 2))
-        elif self._kind == "download":
-            w = r.width() * 0.42
-            p.drawRect(QRectF(cx - w, cy - w * 1.5, w * 2, w * 0.9))
-            tri = QPainterPath()
-            tri.moveTo(cx - w, cy - w * 0.6)
-            tri.lineTo(cx + w, cy - w * 0.6)
-            tri.lineTo(cx, cy + w * 1.2)
-            tri.closeSubpath()
-            p.drawPath(tri)
+        if self._kind in self._STD:
+            icon = self.style().standardIcon(self._STD[self._kind])
+            if icon.isNull():
+                self._draw_placeholder(p, cx, cy, r)
+            else:
+                s = int(r.width() * 0.52 * scale)
+                pix = icon.pixmap(s, s)
+                p.drawPixmap(int(cx - s / 2), int(cy - s / 2), pix)
         elif self._kind == "menu":
-            # three vertical dots (overflow / rename)
-            s = r.width() * 0.09
+            # Clean, centered horizontal three-dot overflow glyph.
+            p.setBrush(QColor(TEXT))
+            d = r.width() * 0.11 * scale
+            gap = r.width() * 0.17
             for i in range(3):
-                y = cy - s * 1.6 + i * s * 1.6
-                p.drawEllipse(QRectF(cx - s, y - s, s * 2, s * 2))
+                x = cx + (i - 1) * gap
+                p.drawEllipse(QRectF(x - d, cy - d, d * 2, d * 2))
         p.end()
 
-    def enterEvent(self, event):
-        self.update()
-        super().enterEvent(event)
+    def _draw_placeholder(self, p, cx, cy, r):
+        """Fallback so a button never renders empty if an icon is missing."""
+        p.setBrush(QColor(TEXT))
+        d = r.width() * 0.14
+        for i in range(3):
+            x = cx + (i - 1) * r.width() * 0.17
+            p.drawEllipse(QRectF(x - d, cy - d, d * 2, d * 2))
 
-    def leaveEvent(self, event):
-        self.update()
-        super().leaveEvent(event)
 
 
 class AudioPlayer(QFrame):
@@ -321,7 +354,13 @@ class AudioPlayer(QFrame):
             pcm_size = max(0, file_size - 44)
             duration_ms = int(pcm_size / (24000 * 1 * 2) * 1000)
             self.slider.setRange(0, max(0, duration_ms))
-            if self._player.position() > duration_ms and duration_ms > 0:
+            # Keep the running time label live even though the source is growing.
+            pos = self._player.position()
+            self.slider.setValue(pos)
+            self.label_time.setText(
+                f"{format_time(pos)} / {format_time(duration_ms)}"
+            )
+            if pos > duration_ms and duration_ms > 0:
                 self._player.setPosition(0)
 
     def apply_styles(self):
@@ -356,8 +395,5 @@ class AudioPlayer(QFrame):
             }}
             QSlider#SeekSlider::handle:horizontal:hover {{
                 background: {ACCENT};
-            }}
-            #IconButton:hover {{
-                border: 1px solid {ACCENT};
             }}
         """)

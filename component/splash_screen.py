@@ -2,50 +2,12 @@ import sys
 from PySide6.QtCore import Qt, QTimer, QRectF
 from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
-    QApplication, QVBoxLayout, QWidget, QLabel
+    QApplication, QVBoxLayout, QWidget, QLabel, QProgressBar
 )
 
 
-class Spinner(QWidget):
-    """Indeterminate circular loading spinner (custom painted, GPU-cheap)."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(56, 56)
-        self._angle = 0.0
-        self._timer = QTimer(self)
-        self._timer.setInterval(16)
-        self._timer.timeout.connect(self._rotate)
-        self._timer.start()
-
-    def _rotate(self):
-        self._angle = (self._angle + 4.0) % 360
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        r = QRectF(self.rect()).adjusted(4, 4, -4, -4)
-
-        # Track
-        pen_track = QPen(QColor("#26262B"))
-        pen_track.setWidthF(4)
-        p.setPen(pen_track)
-        p.drawEllipse(r)
-
-        # Spinning arc (monochrome white/gray)
-        pen = QPen(QColor("#FFFFFF"))
-        pen.setWidthF(4)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(pen)
-        p.drawArc(r, int(-self._angle * 16), int(80 * 16))
-
-        p.end()
-
-
 class SplashScreen(QWidget):
-    """Frameless, rounded startup splash with a live spinner + status text."""
+    """Frameless, rounded startup splash with a progress bar + status text."""
 
     def __init__(self):
         super().__init__()
@@ -72,11 +34,22 @@ class SplashScreen(QWidget):
         subtitle.setFont(QFont("Segoe UI", 9))
         subtitle.setStyleSheet("color: #4A5568; letter-spacing: 3px;")
 
-        spinner = Spinner()
-        spinner_container = QWidget()
-        sl = QVBoxLayout(spinner_container)
-        sl.setContentsMargins(0, 8, 0, 8)
-        sl.addWidget(spinner, 0, Qt.AlignmentFlag.AlignCenter)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #1B1B1E;
+                border: 1px solid #2E2E33;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background-color: #FFFFFF;
+                border-radius: 3px;
+            }
+        """)
 
         self.status_label = QLabel("Starting up...")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -87,11 +60,18 @@ class SplashScreen(QWidget):
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addStretch()
-        layout.addWidget(spinner_container)
+        layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
         layout.addStretch()
 
+    def set_progress(self, value, text=None):
+        """Set the progress bar to a real percentage and (optionally) status text."""
+        self.progress_bar.setValue(max(0, min(100, int(value))))
+        if text is not None:
+            self.status_label.setText(text)
+
     def set_status(self, text):
+        """Update only the status text without guessing a percentage."""
         self.status_label.setText(text)
 
     def close_with_fade(self, window, after_ms=250):

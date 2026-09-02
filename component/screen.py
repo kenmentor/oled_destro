@@ -1,8 +1,14 @@
 import sys 
 import os 
+import uuid as _uuid
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QFileDialog, 
-                                QLabel, QProgressBar, QComboBox, QWidget)
-from PySide6.QtCore import Slot, QThreadPool, Qt,QThread
+                                QLabel, QProgressBar, QComboBox, QWidget, QApplication,
+                                QMessageBox)
+from PySide6.QtCore import Slot, QThreadPool, Qt, QThread, QTimer
+
+
+def uuid4_hex():
+    return _uuid.uuid4().hex[:12]
 
 from component.buttons.action import ButtonHolder
 from modules.documentToTextModule import DocumentToText
@@ -88,7 +94,16 @@ class Screen1(QFrame):
 
         # --- Threading Setup ---
         self.threadpool = QThreadPool.globalInstance()
-        self.init_engine_worker()
+        # Initialize loader (but don't start thread yet - done in mainWindow.start_engine_loading)
+        self.engine_thread = QThread()
+        self.loader = Worker()
+        self.loader.moveToThread(self.engine_thread)
+        # Smooth determinate animation for the engine/model-load progress bar.
+        self._load_target = 0
+        self._load_anim = QTimer(self)
+        self._load_anim.setInterval(30)
+        self._load_anim.timeout.connect(self._tick_load_anim)
+        self.loader.step.connect(self._on_engine_step)
         import sys; print("[screen1] init done", flush=True)
         
         self.apply_styles()
@@ -197,26 +212,35 @@ class Screen1(QFrame):
         self.btn_home.set_generate_mode(True)
 
     def init_engine_worker(self):
-        # Using a distinct dedicated thread strictly for initializing the engine
-        self.engine_thread = QThread()
-        self.loader = Worker()
-        self.loader.moveToThread(self.engine_thread)
-        self.engine_thread.started.connect(self.loader.worker_job) 
-        self.loader.progress.connect(self.status_label.setText)
-        self.loader.progress.connect(self._on_loader_progress)
-        self.loader.finished.connect(self.on_engine_ready)
+        # Thread and loader already created in __init__; just connect signals and start.
+        self.engine_thread.started.connect(self.loader.worker_job)
         self.engine_thread.start()
 
     @Slot(object)
     def on_engine_ready(self, engine):
         if engine is None:
             self.status_label.setText("Engine failed to load")
+            bar = self._progress_bar()
+            if bar is not None:
+                bar.hide()
+                bar.setRange(0, 1)
+                bar.setValue(0)
+            self._load_anim.stop()
             show_error(self.window(), "AI engine failed to load. Check the model files and try again.")
             return
         self.tts_engine = engine
         self.status_label.setText("AI Engine Ready")
         self.btn_continue.setEnabled(True)
+        # Ensure the load bar reaches 100%, then tuck it away.
+        self._load_target = 100
+        if not self._load_anim.isActive():
+            self._load_anim.start()
+        QTimer.singleShot(600, self._hide_load_bar)
         show_success(self.window(), "AI engine ready")
+        # Offer to resume a generation that was interrupted by a crash/shutdown.
+        if not getattr(self, "_recovery_checked", False):
+            self._recovery_checked = True
+            QTimer.singleShot(800, self._prompt_resume)
         
     def updateprogress(self, message):
         self.status_label.setText(message)
@@ -227,6 +251,41 @@ class Screen1(QFrame):
 
     def _progress_bar(self):
         return self._progress_target
+
+    @Slot(int, str)
+    def _on_engine_step(self, pct, msg):
+        """Determinate 0-100% progress for the engine/model load."""
+        self.status_label.setText(msg)
+        self._load_target = max(0, min(100, int(pct)))
+        bar = self._progress_bar()
+        if bar is None:
+            return
+        bar.show()
+        bar.setRange(0, 100)
+        bar.setTextVisible(False)
+        if not self._load_anim.isActive():
+            self._load_anim.start()
+
+    def _tick_load_anim(self):
+        """Ease the bar value toward the latest checkpoint so it visibly climbs."""
+        bar = self._progress_bar()
+        if bar is None:
+            self._load_anim.stop()
+            return
+        cur = bar.value()
+        target = self._load_target
+        if cur < target:
+            step = max(1, (target - cur) // 10)
+            bar.setValue(min(target, cur + step))
+        if cur >= target:
+            self._load_anim.stop()
+
+    def _hide_load_bar(self):
+        bar = self._progress_bar()
+        if bar is not None:
+            bar.hide()
+            bar.setRange(0, 1)
+            bar.setValue(0)
 
     def _on_loader_progress(self, msg):
         """Show/hide the progress bar to reflect the app loading state."""
@@ -301,9 +360,9 @@ class Screen1(QFrame):
         self._generating = False
 
     def toggle_generate(self):
-        """Runs generation, or cancels an in-progress run (button turns red)."""
+        """Runs generation, or stops an in-progress run (button turns red)."""
         if getattr(self, "_generating", False):
-            self.cancel_generation()
+            self.stop_generation()
             return
         self.generate()
 
@@ -313,11 +372,25 @@ class Screen1(QFrame):
             show_error(self.window(), "AI engine is not ready yet. Please wait.")
             return
 
-        text = document_tool.get_all_chunks()
+        # --- React instantly so the UI feels responsive before any heavy work ---
+        self.status_label.setText("Preparing generation...")
+        self.btn_continue.setEnabled(False)
+        self.btn_continue.set_text("Preparing...")
+        QApplication.processEvents()
+
+        try:
+            text = document_tool.get_all_chunks()
+        except Exception as e:
+            self.updateprogress("Error reading text")
+            self._set_generate_mode()
+            show_error(self.window(), f"Could not read document text:\n{e}")
+            return
         if not text:
             self.updateprogress("No text found to synthesize")
+            self._set_generate_mode()
             show_error(self.window(), "No text found to synthesize. Load a document first.")
             return
+        QApplication.processEvents()
 
         selected_voice_id = stateBase.voice
         print(f"[Synthesizer Directive] Extracting stream data using Model ID: {selected_voice_id}")
@@ -328,41 +401,68 @@ class Screen1(QFrame):
                 self.window(),
                 "Pocket model needs a voice. Pick one of the defaults or create a clone.",
             )
+            self._set_generate_mode()
             self.updateprogress("No usable voice selected for Pocket model")
             return
 
         # Setting up the task and passing signals as a tracking object keyword arg
         import threading
+        from modules.recovery import GenerationJob
+        # Reserve a stable output path now so recovery knows exactly where the
+        # WAV will be written, and persist an "active" job for crash recovery.
+        out_dir = os.path.join(os.getcwd(), "outputs")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"synth_{uuid4_hex()}.wav")
+        job = GenerationJob(
+            job_id=os.path.splitext(os.path.basename(out_path))[0],
+            chunks=text, voice=selected_voice_id, model=stateBase.model,
+            out_path=out_path, status="active",
+        )
+        job.save()
+        self._active_job = job
+
         self._cancel_event = threading.Event()
         worker = ModelTask(
             self.loader.process_synthesis,
             text, signals=None, model=stateBase.model,
-            cancel_event=self._cancel_event,
+            cancel_event=self._cancel_event, job=job,
         )
         worker.signals.progress.connect(self.updateprogress)
         worker.signals.finished.connect(self.on_synthesis_complete)
         worker.signals.count.connect(self.updateProgressCounter)
         worker.signals.chunk_ready.connect(self.on_synthesis_chunk_ready)
-        worker.signals.error.connect(lambda err: show_error(self.window(), f"Generation failed:\n{err}"))
+        # Any error must also reset the UI so the button never stays stuck.
+        worker.signals.error.connect(
+            lambda err: (show_error(self.window(), f"Generation failed:\n{err}"),
+                         self.on_synthesis_complete(None))
+        )
 
+        # Show combining/streaming progress bar and switch to Stop.
+        bar = self._progress_bar()
+        if bar is not None:
+            bar.show()
+            bar.setRange(0, 0)
+            bar.setTextVisible(False)
+            bar.setValue(0)
+        self.status_label.setText("Extracting stream data...")
         self._generating = True
         self.btn_continue.setEnabled(True)
-        self.btn_continue.set_text("Cancel")
+        self.btn_continue.set_text("Stop Generation")
         self.btn_continue.set_cancel_mode(True)
+        QApplication.processEvents()
         self.threadpool.start(worker)
 
-    def cancel_generation(self):
-        # Guard: only act if a generation is actually in progress.
+    def stop_generation(self):
+        """Request a stop of the in-progress run; button shows 'Stopping…' until done."""
         if not getattr(self, "_generating", False):
             return
         if getattr(self, "_cancel_event", None) is None:
             return
         self._cancel_event.set()
-        self._generating = False
-        self.btn_continue.set_text("Cancelling…")
+        self.btn_continue.set_text("Stopping…")
         self.btn_continue.setEnabled(False)
-        self.updateprogress("Cancelling…")
-        show_info(self.window(), "Cancelling generation…")
+        self.updateprogress("Stopping generation…")
+        show_info(self.window(), "Stopping generation…")
 
     def on_synthesis_chunk_ready(self, path):
         """Start playing the growing WAV as soon as the first audio is written."""
@@ -407,3 +507,73 @@ class Screen1(QFrame):
             else:
                 self.updateprogress("No audio was generated")
                 show_error(self.window(), "Synthesis produced no audio")
+
+    # --- crash recovery -----------------------------------------------------
+    def _prompt_resume(self):
+        """If an interrupted generation was found, ask the user whether to resume."""
+        from modules.recovery import latest_active
+        job = latest_active()
+        if job is None:
+            return
+        if not os.path.exists(job.out_path):
+            job.remove()
+            return
+        ret = QMessageBox.information(
+            self.window(),
+            "Recover last generation",
+            "Found an interrupted generation.\n\n"
+            f"{os.path.basename(job.out_path)}\n"
+            f"({job.completed}/{len(job.chunks)} chunks saved — partial audio is playable & downloadable)\n\n"
+            "Resume it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if ret == QMessageBox.StandardButton.Yes:
+            self.resume_last_generation(job)
+
+    def resume_last_generation(self, job=None):
+        """Continue a previously interrupted generation from the last saved chunk."""
+        if job is None:
+            from modules.recovery import latest_active
+            job = latest_active()
+        if job is None:
+            self.updateprogress("No recovery job found")
+            return False
+        if not os.path.exists(job.out_path):
+            job.remove()
+            self.updateprogress("Recovery audio is missing")
+            return False
+
+        self.status_label.setText("Resuming last generation…")
+        self._active_job = job
+
+        import threading
+        self._cancel_event = threading.Event()
+        worker = ModelTask(
+            self.loader.process_synthesis,
+            job.chunks, signals=None, model=job.model,
+            cancel_event=self._cancel_event, job=job, resume_completed=job.completed,
+        )
+        worker.signals.progress.connect(self.updateprogress)
+        worker.signals.finished.connect(self.on_synthesis_complete)
+        worker.signals.count.connect(self.updateProgressCounter)
+        worker.signals.chunk_ready.connect(self.on_synthesis_chunk_ready)
+        worker.signals.error.connect(
+            lambda err: (show_error(self.window(), f"Generation failed:\n{err}"),
+                         self.on_synthesis_complete(None))
+        )
+
+        bar = self._progress_bar()
+        if bar is not None:
+            bar.show()
+            bar.setRange(0, 0)
+            bar.setTextVisible(False)
+            bar.setValue(0)
+        self._generating = True
+        self.btn_continue.setEnabled(True)
+        self.btn_continue.set_text("Stop Generation")
+        self.btn_continue.set_cancel_mode(True)
+        # The partial audio is already playable/downloadable — surface it now.
+        self.Audio_player.load_live(job.out_path)
+        QApplication.processEvents()
+        self.threadpool.start(worker)
+        return True

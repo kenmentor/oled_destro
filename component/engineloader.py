@@ -45,26 +45,41 @@ class Worker(QObject):
     finished = Signal(object)
     # Emitted after a model switch completes (separate from initial load)
     switch_finished = Signal(object)
+    # Numeric progress (0-100) + message for the engine/model load.
+    step = Signal(int, str)
 
     def __init__(self):
         super().__init__()
         self.engine = None
-        # Lazy: imported on first use (avoids pulling torch/kokoro at module load).
-        from modules.ttsEgine import MODEL_EGINE
-        self.MODEL_EGINE = MODEL_EGINE()
+        self.MODEL_EGINE = None
+
+    def _ensure_engine(self):
+        """Lazily import + construct the model engine on first use. Must run on
+        the background (engine) thread so the heavy ttsEgine import never blocks
+        the GUI thread during startup."""
+        if self.MODEL_EGINE is None:
+            from modules.ttsEgine import MODEL_EGINE
+            self.MODEL_EGINE = MODEL_EGINE()
+        return self.MODEL_EGINE
 
     @Slot()
     def worker_job(self):
         self.progress.emit("Loading AI engine...")
         try:
+            self.step.emit(5, "Starting AI engine...")
+            self._ensure_engine()
+            self.step.emit(60, "AI engine loaded — building model...")
             model_class = self.MODEL_EGINE.load_default()
             self.engine = model_class()
+            self.step.emit(90, "Loading voice profiles...")
             self._ensure_valid_voice()
             self.progress.emit("AI Engine Ready")
+            self.step.emit(100, "AI Engine Ready")
             self.finished.emit(self.engine)
         except Exception as e:
             self.progress.emit(f"Error: {str(e)}")
             traceback.print_exc()
+            self.step.emit(100, f"Error: {str(e)}")
             self.finished.emit(None)
 
     def _ensure_valid_voice(self):
@@ -95,6 +110,7 @@ class Worker(QObject):
 
     def set_model(self, model_name):
         print("[set_model]->", model_name)
+        self._ensure_engine()
         model_class = self.MODEL_EGINE.get_model(model_name)
         self.engine = model_class()
         default = getattr(self.engine, "default_voice", None)
@@ -119,14 +135,18 @@ class Worker(QObject):
         """
         try:
             self.progress.emit(f"Loading {model_name} model...")
+            self.step.emit(15, f"Switching to {model_name}...")
             self.set_model(model_name)
+            self.step.emit(70, f"Loading {model_name} voice profiles...")
             self._ensure_valid_voice()
             self.progress.emit(f"{model_name} ready")
+            self.step.emit(100, f"{model_name} ready")
             self.switch_finished.emit(self.engine)
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.progress.emit(f"Model failed to load: {e}")
+            self.step.emit(100, f"Model failed to load: {e}")
             self.switch_finished.emit(None)
 
     def switch_model(self, model_name):
@@ -141,8 +161,14 @@ class Worker(QObject):
             Q_ARG(str, model_name),
         )
 
-    def process_synthesis(self, chunks, voice="", signals=None, model=None, cancel_event=None):
-        """Logic for synthesis to be called by the ThreadPool."""
+    def process_synthesis(self, chunks, voice="", signals=None, model=None,
+                          cancel_event=None, job=None, resume_completed=0):
+        """Logic for synthesis to be called by the ThreadPool.
+
+        When `job` (a modules.recovery.GenerationJob) is supplied, progress is
+        persisted to disk so a crash can be recovered. `resume_completed` lets a
+        resumed run skip chunks that were already written to the same WAV.
+        """
         if model is not None and model != self.MODEL_EGINE.current_model:
             stateBase.model = model
             self.set_model(model)
@@ -159,11 +185,17 @@ class Worker(QObject):
         total_chunks = len(chunks)
         chunk_weight = 100.0 / total_chunks
 
-        # Write straight to a growing WAV so playback can begin early.
-        out_dir = os.path.join(os.getcwd(), "outputs")
-        os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, f"synth_{uuid.uuid4().hex[:12]}.wav")
-        writer = StreamingWavWriter(out_path, sample_rate=24000, bit_depth=16, channels=1)
+        # Reuse the job's output file on resume; otherwise create a fresh one.
+        out_path = job.out_path if (job and job.out_path) else None
+        if not out_path:
+            out_dir = os.path.join(os.getcwd(), "outputs")
+            os.makedirs(out_dir, exist_ok=True)
+            out_path = os.path.join(out_dir, f"synth_{uuid.uuid4().hex[:12]}.wav")
+
+        writer = StreamingWavWriter(
+            out_path, sample_rate=24000, bit_depth=16, channels=1,
+            resume=bool(resume_completed),
+        )
 
         emitted_first = False
         cancelled = False
@@ -175,6 +207,14 @@ class Worker(QObject):
                     break
 
                 base_progress = idx * chunk_weight
+
+                # Skip chunks already committed to disk on a resumed run.
+                if resume_completed and idx < resume_completed:
+                    if job is not None:
+                        job.update(completed=idx + 1, status="active")
+                    if signals:
+                        signals.count.emit(int((idx + 1) * chunk_weight))
+                    continue
 
                 if signals:
                     signals.progress.emit(f"Synthesizing chunk {idx + 1}/{total_chunks}...")
@@ -199,23 +239,39 @@ class Worker(QObject):
 
                 if cancelled:
                     break
+
+                # This chunk is fully committed — persist for recovery.
+                if job is not None:
+                    job.update(completed=idx + 1, status="active")
+
                 if signals:
                     signals.count.emit(int((idx + 1) * chunk_weight))
         finally:
             writer.finalize()
+            if job is not None and writer.has_data:
+                job.update(completed=job.completed, status=job.status)
 
         if cancelled:
             if writer.has_data:
-                database.add(out_path)
+                if not resume_completed:
+                    database.add(out_path)
+                if job is not None:
+                    job.update(status="cancelled")
                 if signals:
                     signals.progress.emit("Generation cancelled — partial audio saved")
             else:
+                if job is not None:
+                    job.remove()
                 if signals:
                     signals.progress.emit("Generation cancelled")
             return None
 
         if writer.has_data:
-            database.add(out_path)
+            if not resume_completed:
+                database.add(out_path)
+            if job is not None:
+                job.update(status="done")
+                job.remove()
             return out_path
 
         return None

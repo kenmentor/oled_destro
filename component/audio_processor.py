@@ -18,18 +18,22 @@ class StreamingWavWriter:
 
     _PENDING_SIZE = 0x7FFFFFFF  # ~2 GiB placeholder in the header
 
-    def __init__(self, path, sample_rate=24000, bit_depth=16, channels=1):
+    def __init__(self, path, sample_rate=24000, bit_depth=16, channels=1, resume=False):
         self.path = os.path.abspath(path)
         self._sample_rate = sample_rate
         self._bit_depth = bit_depth
         self._channels = channels
-        self._pcm_bytes_written = 0
         self._closed = False
 
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        header = self._make_header(self._PENDING_SIZE)
-        with open(self.path, "wb") as f:
-            f.write(header)
+        if resume and os.path.exists(self.path):
+            # Continue an existing (already valid) WAV: keep its data and header.
+            self._pcm_bytes_written = max(0, os.path.getsize(self.path) - 44)
+        else:
+            self._pcm_bytes_written = 0
+            header = self._make_header(self._PENDING_SIZE)
+            with open(self.path, "wb") as f:
+                f.write(header)
 
     # -- public API ---------------------------------------------------------
     def append(self, pcm_bytes: bytes):
@@ -38,7 +42,7 @@ class StreamingWavWriter:
         new_size = self._pcm_bytes_written + len(pcm_bytes)
         with open(self.path, "r+b") as f:
             f.seek(40)
-            struct.pack_into("<I", f, 0, new_size)
+            f.write(struct.pack("<I", new_size))
         with open(self.path, "ab") as f:
             f.write(pcm_bytes)
         self._pcm_bytes_written = new_size
