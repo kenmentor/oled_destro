@@ -171,4 +171,35 @@ class mainWindow(QMainWindow):
             QPushButton:focus, QComboBox:focus, QListView:focus {
                 outline: none;
             }
+            /* Dark combo boxes with a vibrant orange dropdown highlight. */
+            QComboBox {
+                background-color: #12141C;
+                border: 1px solid #2E2E33;
+                border-radius: 6px;
+                color: #ECEDEE;
+                padding: 4px 10px;
+                selection-background-color: #FF6B1A;
+                selection-color: #FFFFFF;
+            }
+            QComboBox:hover { border-color: #7A310B; }
+            QComboBox:on { border-color: #FF6B1A; }
+            QComboBox::drop-down {
+                border: none;
+                width: 22px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0px;
+                height: 0px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #12141C;
+                color: #ECEDEE;
+                border: 1px solid #FF6B1A;
+                border-radius: 6px;
+                selection-background-color: #FF6B1A;
+                selection-color: #FFFFFF;
+                outline: none;
+            }
+            QProgressBar::chunk { background-color: #FF6B1A; }
         """)

@@ -42,13 +42,13 @@ class ButtonHolder(QWidget):
         self.button.setText(text)
 
     def set_generate_mode(self, on):
-        """White button, black text while idle; used for Generate / Select PDF."""
+        """Vibrant orange primary button for Generate / Select PDF."""
         if on:
             self.button.setStyleSheet("""
             QPushButton {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: 1px solid #FFFFFF;
+                background-color: #FF6B1A;
+                color: #FFFFFF;
+                border: 1px solid #FF6B1A;
                 border-radius: 5px;
                 padding: 8px 16px;
                 font-size: 13px;
@@ -56,8 +56,8 @@ class ButtonHolder(QWidget):
                 font-weight: 700;
                 letter-spacing: 0.5px;
             }
-            QPushButton:hover { background-color: #E4E4E7; color: #000000; }
-            QPushButton:pressed { background-color: #C4C4C8; color: #000000; }
+            QPushButton:hover { background-color: #FF8A3D; color: #FFFFFF; }
+            QPushButton:pressed { background-color: #E0550E; color: #FFFFFF; }
             QPushButton:disabled {
                 background-color: transparent; border: 1px solid #1C1C1E; color: #3A3A3C;
             }
@@ -98,14 +98,14 @@ class ButtonHolder(QWidget):
 
 QPushButton:hover {
     background-color: #161618;
-    border-color: #E4E4E7;
+    border-color: #FF6B1A;
     color: #FFFFFF;
 }
 
 QPushButton:pressed {
-    background-color: #E4E4E7;
-    border-color: #E4E4E7;
-    color: #000000;
+    background-color: #FF6B1A;
+    border-color: #FF6B1A;
+    color: #FFFFFF;
 }
 
 QPushButton:disabled {

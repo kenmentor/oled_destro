@@ -22,7 +22,10 @@ CARD_BG = "#131316"
 BORDER = "#26262B"
 TEXT = "#ECEDEE"
 MUTED = "#8A8A8F"
-ACCENT = "#E4E4E7"   # monochrome accent (white/gray)
+ACCENT = "#FF6B1A"   # vibrant orange accent
+ACCENT_HOVER = "#FF8A3D"
+ACCENT_PRESSED = "#E0550E"
+ON_ACCENT = "#1B0A02"  # near-black glyph used on top of the orange buttons
 
 
 class IconButton(QFrame):
@@ -89,13 +92,22 @@ class IconButton(QFrame):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
 
-        # Background: idle -> hover -> pressed (subtle monochrome ramp).
-        bg = CARD_BG
-        border = BORDER
-        if self._pressed:
-            bg, border = "#25252A", ACCENT
-        elif self._hover:
-            bg, border = "#1B1B1F", "#3A3A40"
+        # The play button is the primary control — solid orange circle.
+        # Others keep a subtle monochrome look with orange hover/press accents.
+        if self._kind == "play":
+            if self._pressed:
+                bg, border = ACCENT_PRESSED, ACCENT_PRESSED
+            elif self._hover:
+                bg, border = ACCENT_HOVER, ACCENT_HOVER
+            else:
+                bg, border = ACCENT, ACCENT
+        else:
+            bg = CARD_BG
+            border = BORDER
+            if self._pressed:
+                bg, border = ACCENT_PRESSED, ACCENT
+            elif self._hover:
+                bg, border = "#1B1B1F", ACCENT
 
         p.setBrush(QColor(bg))
         p.setPen(QColor(border))
@@ -105,14 +117,31 @@ class IconButton(QFrame):
         cx, cy = r.center().x(), r.center().y()
         scale = 1.10 if self._pressed else 1.0
 
-        if self._kind in self._STD:
+        if self._kind == "play":
+            # Hand-drawn play triangle, dark for contrast on the orange fill.
+            s = r.width() * 0.42 * scale
+            path = QPainterPath()
+            x0 = cx - s * 0.15
+            path.moveTo(x0, cy - s * 0.55)
+            path.lineTo(x0, cy + s * 0.55)
+            path.lineTo(x0 + s * 0.95, cy)
+            path.closeSubpath()
+            p.setBrush(QColor(ON_ACCENT))
+            p.drawPath(path)
+        elif self._kind in self._STD:
             icon = self.style().standardIcon(self._STD[self._kind])
             if icon.isNull():
                 self._draw_placeholder(p, cx, cy, r)
             else:
                 s = int(r.width() * 0.52 * scale)
                 pix = icon.pixmap(s, s)
-                p.drawPixmap(int(cx - s / 2), int(cy - s / 2), pix)
+                # Tint the standard icon so it reads on the dark circle.
+                tint = QColor(TEXT)
+                if pix.isNull():
+                    self._draw_placeholder(p, cx, cy, r)
+                else:
+                    tp = self._tinted_pixmap(pix, tint)
+                    p.drawPixmap(int(cx - s / 2), int(cy - s / 2), tp)
         elif self._kind == "menu":
             # Clean, centered horizontal three-dot overflow glyph.
             p.setBrush(QColor(TEXT))
@@ -122,6 +151,20 @@ class IconButton(QFrame):
                 x = cx + (i - 1) * gap
                 p.drawEllipse(QRectF(x - d, cy - d, d * 2, d * 2))
         p.end()
+
+    @staticmethod
+    def _tinted_pixmap(pix, color):
+        """Recolor a standard icon's alpha mask to `color` for a consistent look."""
+        from PySide6.QtGui import QPixmap, QPainter as _QP
+        tinted = QPixmap(pix.size())
+        tinted.fill(Qt.GlobalColor.transparent)
+        tp = _QP(tinted)
+        tp.setCompositionMode(_QP.CompositionMode.CompositionMode_Source)
+        tp.fillRect(tinted.rect(), QColor(color))
+        tp.setCompositionMode(_QP.CompositionMode.CompositionMode_DestinationIn)
+        tp.drawPixmap(0, 0, pix)
+        tp.end()
+        return tinted
 
     def _draw_placeholder(self, p, cx, cy, r):
         """Fallback so a button never renders empty if an icon is missing."""

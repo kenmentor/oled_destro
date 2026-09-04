@@ -209,7 +209,7 @@ class leftPannel(QFrame):
                 border-radius: 5px;
             }
             #AppProgress::chunk {
-                background-color: #FFFFFF;
+                background-color: #FF6B1A; /* vibrant orange accent */
                 border-radius: 5px;
             }
             
@@ -220,6 +220,8 @@ class leftPannel(QFrame):
                 color: #FFFFFF;
                 letter-spacing: 3px;
                 margin-bottom: 10px;
+                padding-bottom: 8px;
+                border-bottom: 2px solid #FF6B1A; /* vibrant orange accent */
                 font-family: 'Inter', system-ui, sans-serif;
             }
 
@@ -242,16 +244,17 @@ class leftPannel(QFrame):
                
             }
 
-            /* THE ACTIVE PILL SELECTOR (Matches reference image perfectly) */
+            /* THE ACTIVE PILL SELECTOR — vibrant orange accent */
             QPushButton:checked {
-                background-color: #FFFFFF; /* Shifts to stunning solid white capsule wrapper */
-                color: #000000;            /* Crisp black text foreground clarity */
+                background-color: #FF6B1A; /* Vibrant matching orange */
+                color: #FFFFFF;            /* Crisp white foreground text */
                 font-weight: 700;
                 border: none;              /* Clears old left border indicator line layout */
             }
 
             /* Quick responsive layout click reaction */
             QPushButton:pressed {
-                background-color: #E2E8F0;
+                background-color: #FF8A3D;
+                color: #FFFFFF;
             }
         """)

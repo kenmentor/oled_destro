@@ -46,7 +46,7 @@ class Model(QFrame):
                 border-radius: 0px; /* Sharp rigid system look */
             }
             QFrame#ModelCard:hover {
-                border-color: #E4E4E7; /* Highlight accent interactive state */
+                border-color: #FF6B1A; /* vibrant orange accent interactive state */
                 background-color: #141416;
             }
             QLabel#ModelName {
