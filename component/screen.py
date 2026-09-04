@@ -356,6 +356,7 @@ class Screen1(QFrame):
         """Reset the Generate/Cancel button to a known idle state."""
         self.btn_continue.set_text("Generate Audio")
         self.btn_continue.set_generate_mode(True)
+        self.btn_continue.set_busy(False)
         self.btn_continue.setEnabled(True)
         self._generating = False
 
@@ -376,6 +377,7 @@ class Screen1(QFrame):
         self.status_label.setText("Preparing generation...")
         self.btn_continue.setEnabled(False)
         self.btn_continue.set_text("Preparing...")
+        self.btn_continue.set_busy(True)
         QApplication.processEvents()
 
         try:
@@ -449,6 +451,7 @@ class Screen1(QFrame):
         self.btn_continue.setEnabled(True)
         self.btn_continue.set_text("Stop Generation")
         self.btn_continue.set_cancel_mode(True)
+        self.btn_continue.set_busy(True)
         QApplication.processEvents()
         self.threadpool.start(worker)
 
@@ -477,6 +480,7 @@ class Screen1(QFrame):
         self._generating = False
         self.btn_continue.set_text("Generate Audio")
         self.btn_continue.set_generate_mode(True)
+        self.btn_continue.set_busy(False)
         self.btn_continue.setEnabled(True)
         # Apply a model switch that was requested while generating.
         pending = getattr(self, "_pending_model", None)
@@ -570,6 +574,7 @@ class Screen1(QFrame):
         self.btn_continue.setEnabled(True)
         self.btn_continue.set_text("Stop Generation")
         self.btn_continue.set_cancel_mode(True)
+        self.btn_continue.set_busy(True)
         # The partial audio is already playable/downloadable — surface it now.
         self.Audio_player.load_live(job.out_path)
         QApplication.processEvents()

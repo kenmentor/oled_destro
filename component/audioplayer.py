@@ -2,11 +2,11 @@ import os
 import shutil
 
 from PySide6.QtCore import Qt, QUrl, QRectF, Signal, QTimer
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QIcon
+from PySide6.QtGui import QColor, QPainter, QPainterPath
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QSlider, QVBoxLayout,
-    QInputDialog, QStyle
+    QInputDialog
 )
 
 
@@ -29,16 +29,10 @@ ON_ACCENT = "#1B0A02"  # near-black glyph used on top of the orange buttons
 
 
 class IconButton(QFrame):
-    """A round icon button using Qt's built-in standard icons, with hover and
-    press feedback (no focus rectangle)."""
+    """A round icon button with crisp hand-drawn vector glyphs and hover /
+    press feedback (no focus rectangle). The play button doubles as a pause
+    button when audio is playing."""
     clicked = Signal()
-
-    # kind -> standard pixmap (play/stop/download use built-ins; menu is drawn)
-    _STD = {
-        "play": QStyle.StandardPixmap.SP_MediaPlay,
-        "stop": QStyle.StandardPixmap.SP_MediaStop,
-        "download": QStyle.StandardPixmap.SP_DialogSaveButton,
-    }
 
     def __init__(self, parent=None, size=34, kind="play"):
         super().__init__(parent)
@@ -101,6 +95,7 @@ class IconButton(QFrame):
                 bg, border = ACCENT_HOVER, ACCENT_HOVER
             else:
                 bg, border = ACCENT, ACCENT
+            glyph = QColor(ON_ACCENT)
         else:
             bg = CARD_BG
             border = BORDER
@@ -108,6 +103,7 @@ class IconButton(QFrame):
                 bg, border = ACCENT_PRESSED, ACCENT
             elif self._hover:
                 bg, border = "#1B1B1F", ACCENT
+            glyph = QColor(TEXT)
 
         p.setBrush(QColor(bg))
         p.setPen(QColor(border))
@@ -116,63 +112,64 @@ class IconButton(QFrame):
 
         cx, cy = r.center().x(), r.center().y()
         scale = 1.10 if self._pressed else 1.0
+        s = r.width() * 0.42 * scale
 
         if self._kind == "play":
-            # Hand-drawn play triangle, dark for contrast on the orange fill.
-            s = r.width() * 0.42 * scale
-            path = QPainterPath()
-            x0 = cx - s * 0.15
-            path.moveTo(x0, cy - s * 0.55)
-            path.lineTo(x0, cy + s * 0.55)
-            path.lineTo(x0 + s * 0.95, cy)
-            path.closeSubpath()
-            p.setBrush(QColor(ON_ACCENT))
-            p.drawPath(path)
-        elif self._kind in self._STD:
-            icon = self.style().standardIcon(self._STD[self._kind])
-            if icon.isNull():
-                self._draw_placeholder(p, cx, cy, r)
+            if self._playing:
+                # Pause: two rounded vertical bars — instant playing feedback.
+                w = s * 0.34
+                h = s * 1.2
+                p.setBrush(glyph)
+                for dx in (-w, w):
+                    p.drawRoundedRect(
+                        QRectF(cx + dx - w / 2, cy - h / 2, w, h), w / 2, w / 2
+                    )
             else:
-                s = int(r.width() * 0.52 * scale)
-                pix = icon.pixmap(s, s)
-                # Tint the standard icon so it reads on the dark circle.
-                tint = QColor(TEXT)
-                if pix.isNull():
-                    self._draw_placeholder(p, cx, cy, r)
-                else:
-                    tp = self._tinted_pixmap(pix, tint)
-                    p.drawPixmap(int(cx - s / 2), int(cy - s / 2), tp)
+                # Play: right-pointing triangle.
+                path = QPainterPath()
+                x0 = cx - s * 0.15
+                path.moveTo(x0, cy - s * 0.55)
+                path.lineTo(x0, cy + s * 0.55)
+                path.lineTo(x0 + s * 0.95, cy)
+                path.closeSubpath()
+                p.setBrush(glyph)
+                p.drawPath(path)
+        elif self._kind == "stop":
+            # Stop: a filled square.
+            side = s * 1.15
+            p.setBrush(glyph)
+            p.drawRoundedRect(
+                QRectF(cx - side / 2, cy - side / 2, side, side),
+                side * 0.18, side * 0.18,
+            )
+        elif self._kind == "download":
+            # Download: arrow pointing down into a tray.
+            pen_w = max(1.5, r.width() * 0.075)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            pen = p.pen()
+            pen.setColor(glyph)
+            pen.setWidthF(pen_w)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            shaft_top = cy - s * 0.5
+            shaft_bot = cy + s * 0.05
+            p.drawLine(int(cx), int(shaft_top), int(cx), int(shaft_bot))
+            head = QPainterPath()
+            head.moveTo(cx - s * 0.4, cy - s * 0.25)
+            head.lineTo(cx, shaft_bot)
+            head.lineTo(cx + s * 0.4, cy - s * 0.25)
+            p.drawPath(head)
+            tray_y = cy + s * 0.55
+            p.drawLine(int(cx - s * 0.5), int(tray_y), int(cx + s * 0.5), int(tray_y))
         elif self._kind == "menu":
             # Clean, centered horizontal three-dot overflow glyph.
-            p.setBrush(QColor(TEXT))
+            p.setBrush(glyph)
             d = r.width() * 0.11 * scale
             gap = r.width() * 0.17
             for i in range(3):
                 x = cx + (i - 1) * gap
                 p.drawEllipse(QRectF(x - d, cy - d, d * 2, d * 2))
         p.end()
-
-    @staticmethod
-    def _tinted_pixmap(pix, color):
-        """Recolor a standard icon's alpha mask to `color` for a consistent look."""
-        from PySide6.QtGui import QPixmap, QPainter as _QP
-        tinted = QPixmap(pix.size())
-        tinted.fill(Qt.GlobalColor.transparent)
-        tp = _QP(tinted)
-        tp.setCompositionMode(_QP.CompositionMode.CompositionMode_Source)
-        tp.fillRect(tinted.rect(), QColor(color))
-        tp.setCompositionMode(_QP.CompositionMode.CompositionMode_DestinationIn)
-        tp.drawPixmap(0, 0, pix)
-        tp.end()
-        return tinted
-
-    def _draw_placeholder(self, p, cx, cy, r):
-        """Fallback so a button never renders empty if an icon is missing."""
-        p.setBrush(QColor(TEXT))
-        d = r.width() * 0.14
-        for i in range(3):
-            x = cx + (i - 1) * r.width() * 0.17
-            p.drawEllipse(QRectF(x - d, cy - d, d * 2, d * 2))
 
 
 
@@ -190,8 +187,10 @@ class AudioPlayer(QFrame):
 
         self._player = QMediaPlayer(self)
         self._audio_output = QAudioOutput(self)
-        self._audio_output.setVolume(0.9)
+        self._volume = 0.9
+        self._audio_output.setVolume(self._volume)
         self._player.setAudioOutput(self._audio_output)
+        self._connect_player_signals()
 
         self._path = None
         self._seeking = False
@@ -209,9 +208,29 @@ class AudioPlayer(QFrame):
         self.menu_btn.clicked.connect(self.open_menu)
         self.slider.sliderPressed.connect(self._on_slider_pressed)
         self.slider.sliderReleased.connect(self._on_slider_released)
+
+    def _connect_player_signals(self):
+        """Wire the media player to the UI. Called on construction and after the
+        player is rebuilt so a finalized file is always re-parsed from disk."""
         self._player.positionChanged.connect(self._on_position_changed)
         self._player.durationChanged.connect(self._on_duration_changed)
         self._player.playbackStateChanged.connect(self._on_state_changed)
+
+    def _rebuild_player(self):
+        """Replace the media pipeline with a brand-new instance.
+
+        Windows' Media Foundation backend caches the duration/metadata of a URL
+        it already opened. A WAV that was being streamed live (growing file, ~2 GiB
+        placeholder header) keeps that stale session even after finalize()
+        rewrites the header, so playback stops early. A fresh player forces a
+        clean re-parse of the finalized file."""
+        self._player.stop()
+        self._player.deleteLater()
+        self._player = QMediaPlayer(self)
+        self._audio_output = QAudioOutput(self)
+        self._audio_output.setVolume(self._volume)
+        self._player.setAudioOutput(self._audio_output)
+        self._connect_player_signals()
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
@@ -260,8 +279,14 @@ class AudioPlayer(QFrame):
             return self._mark_missing()
         self._player.stop()
         self._stream_timer.stop()
-        self._path = str(path)
+        was_streaming = self._streaming
         self._streaming = False
+        self._path = str(path)
+        # The file just grew from a live stream (placeholder header finalized);
+        # a fresh pipeline guarantees the real duration is read, not the stale
+        # session cached while the file was still growing.
+        if was_streaming:
+            self._rebuild_player()
         self._player.setSource(QUrl.fromLocalFile(self._path))
         self.label_title.setText(os.path.basename(self._path))
         self.slider.setRange(0, 0)
@@ -404,7 +429,10 @@ class AudioPlayer(QFrame):
                 f"{format_time(pos)} / {format_time(duration_ms)}"
             )
             if pos > duration_ms and duration_ms > 0:
-                self._player.setPosition(0)
+                # Reached the tail of the bytes written so far; sit just behind
+                # the live edge so newly appended audio flows through, instead of
+                # rewinding to 0 and replaying the whole file.
+                self._player.setPosition(max(0, duration_ms - 200))
 
     def apply_styles(self):
         self.setStyleSheet(f"""
