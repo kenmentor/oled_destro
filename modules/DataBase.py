@@ -24,6 +24,16 @@ class DB :
         except Exception as e :
             print("[DB_error]->",e)
             
+    def has(self, path):
+        query = "SELECT COUNT(*) FROM audios WHERE path = ?"
+        try:
+            self.cursor.execute(query, (path,))
+            count = self.cursor.fetchone()[0]
+            return count > 0
+        except Exception as e:
+            print(f"[Database Warning]-> {e}")
+            return False
+
     def add (self,path,):
         print("[started]->add")
         try : 

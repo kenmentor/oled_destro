@@ -253,7 +253,7 @@ class Worker(QObject):
 
         if cancelled:
             if writer.has_data:
-                if not resume_completed:
+                if not database.has(out_path):
                     database.add(out_path)
                 if job is not None:
                     job.update(status="cancelled")
@@ -267,7 +267,7 @@ class Worker(QObject):
             return None
 
         if writer.has_data:
-            if not resume_completed:
+            if not database.has(out_path):
                 database.add(out_path)
             if job is not None:
                 job.update(status="done")

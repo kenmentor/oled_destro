@@ -237,10 +237,10 @@ class Screen1(QFrame):
             self._load_anim.start()
         QTimer.singleShot(600, self._hide_load_bar)
         show_success(self.window(), "AI engine ready")
-        # Offer to resume a generation that was interrupted by a crash/shutdown.
+        # Automatically continue a generation interrupted by a crash/shutdown.
         if not getattr(self, "_recovery_checked", False):
             self._recovery_checked = True
-            QTimer.singleShot(800, self._prompt_resume)
+            QTimer.singleShot(800, self._auto_resume)
         
     def updateprogress(self, message):
         self.status_label.setText(message)
@@ -509,8 +509,9 @@ class Screen1(QFrame):
                 show_error(self.window(), "Synthesis produced no audio")
 
     # --- crash recovery -----------------------------------------------------
-    def _prompt_resume(self):
-        """If an interrupted generation was found, ask the user whether to resume."""
+    def _auto_resume(self):
+        """After a restart, silently continue an interrupted generation as if
+        nothing happened — no dialog, it just keeps going from the last chunk."""
         from modules.recovery import latest_active
         job = latest_active()
         if job is None:
@@ -518,17 +519,7 @@ class Screen1(QFrame):
         if not os.path.exists(job.out_path):
             job.remove()
             return
-        ret = QMessageBox.information(
-            self.window(),
-            "Recover last generation",
-            "Found an interrupted generation.\n\n"
-            f"{os.path.basename(job.out_path)}\n"
-            f"({job.completed}/{len(job.chunks)} chunks saved — partial audio is playable & downloadable)\n\n"
-            "Resume it now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ret == QMessageBox.StandardButton.Yes:
-            self.resume_last_generation(job)
+        self.resume_last_generation(job)
 
     def resume_last_generation(self, job=None):
         """Continue a previously interrupted generation from the last saved chunk."""
@@ -542,6 +533,13 @@ class Screen1(QFrame):
             job.remove()
             self.updateprogress("Recovery audio is missing")
             return False
+
+        # Restore the voice/model that produced the interrupted run so the
+        # rebuilt audio matches what was being made before the crash.
+        if getattr(job, "voice", None):
+            stateBase.voice = job.voice
+        if getattr(job, "model", None):
+            stateBase.model = job.model
 
         self.status_label.setText("Resuming last generation…")
         self._active_job = job
