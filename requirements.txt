@@ -1,8 +1,12 @@
-# OLED-DESTRO Python Sidecar Dependencies
+# OLED-DESTRO Desktop App Dependencies
 # Install with: pip install -r requirements.txt
 
-# Core TTS
-kokoro>=0.3.0
+# Desktop GUI
+PySide6>=6.11.0
+
+# Neural TTS engines
+kokoro>=0.9.4
+pocket-tts>=2.1.0
 torch>=2.0.0
 
 # PDF text extraction
@@ -12,6 +16,7 @@ pymupdf4llm>=0.0.5
 # Audio handling
 numpy>=1.24.0
 soundfile>=0.12.0
+scipy>=1.10.0
 
-# Build tool
-pyinstaller>=6.0.0
+# Model loading (pocket-tts dependency)
+safetensors>=0.4.0

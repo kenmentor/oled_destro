@@ -1,168 +1,84 @@
+import os
 import sys
-from PySide6.QtWidgets import (QApplication, QMainWindow, QFrame, QVBoxLayout, 
-                             QFileDialog, QStackedWidget, QLabel, QProgressBar, 
-                             QWidget, QHBoxLayout, QGraphicsDropShadowEffect)
-from PySide6.QtCore import QObject, QThread, Signal, Slot, QMetaObject, Qt
-from PySide6.QtGui import QFont, QColor
+import time
 
-# --- YOUR MODULE IMPORTS ---
-from component.buttons.action import ButtonHolder
-from modules.documentToTextModule import DocumentToText
-from component.textEditor import TextEdit
-from modules.ttsEgine import TTSEngine
+from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
+from PySide6.QtWidgets import QApplication
 
-# GLOBAL STYLESHEET (The "Make it look good" part)
-STYLE_SHEET = """
-    QMainWindow { background-color: #0F0F0F; }
-    
-    QFrame#MainPage, QFrame#LoadPage { 
-        background-color: #161616; 
-        border-radius: 15px; 
-    }
+app = QApplication(sys.argv)
 
-    QLabel { color: #E0E0E0; font-family: 'Inter', 'Segoe UI'; }
-    
-    /* Style the Text Editor */
-    QPlainTextEdit {
-        background-color: #1E1E1E;
-        border: 1px solid #333;
-        border-radius: 10px;
-        padding: 10px;
-        color: #BBB;
-        font-size: 14px;
-    }
+_START = time.monotonic()
 
-    /* Style the Progress Bar */
-    QProgressBar {
-        border: none;
-        background-color: #252525;
-        height: 6px;
-        border-radius: 3px;
-        text-align: center;
-    }
-    QProgressBar::chunk {
-        background-color: #0078D4;
-        border-radius: 3px;
-    }
-"""
 
-class GenerationWorker(QObject):
-    finished = Signal()
-    status_update = Signal(str)
+def _mark(label):
+    print(f"[startup] {label}: {time.monotonic() - _START:6.2f}s", flush=True)
 
-    def __init__(self, engine, document):
-        super().__init__()
-        self.engine = engine
-        self.document = document
 
-    @Slot()
+class Preloader(QThread):
+    """Imports the heavy modules (torch, kokoro, pocket-tts, PyMuPDF...) off the
+    GUI thread so the splash stays responsive. Only imports happen here -- no
+    QWidget creation -- so thread affinity is never violated."""
+
+    ready = Signal()
+    failed = Signal(str)
+    # Real progress (0-100) + status text while the splash is showing
+    progress = Signal(int, str)
+
     def run(self):
         try:
-            chunks = self.document.get_all_chunks()
-            for idx, chunk_text in enumerate(chunks):
-                self.status_update.emit(f"Generating voice {idx+1}/{len(chunks)}...")
-                for _ in self.engine.synthesize(chunk_text): pass
-            self.status_update.emit("Finished!")
-        finally: self.finished.emit()
+            self.progress.emit(5, "Importing ML libraries (slow first run)...")
+            import torch
+            _mark("torch imported")
+            torch.set_num_threads(os.cpu_count() or 4)
+            torch.set_num_interop_threads(1)
+            self.progress.emit(45, "Importing AI engine...")
+            import component.main_window  # noqa: F401
+            _mark("widgets imported")
+            self.progress.emit(80, "Building interface...")
+            self.ready.emit()
+        except Exception as e:
+            self.failed.emit(repr(e))
+            import traceback
+            traceback.print_exc()
 
-class MainApp(QMainWindow):
-    def __init__(self):
+
+class StartupController(QObject):
+    """GUI-thread owner of the startup sequence. Its slots are delivered queued
+    to the GUI thread, so it is always safe to build QWidgets here."""
+
+    def __init__(self, splash):
         super().__init__()
-        self.setWindowTitle("OpenCode Studio")
-        self.resize(1100, 750)
-        self.setStyleSheet(STYLE_SHEET)
+        self.splash = splash
+        self.preloader = Preloader()
+        self.preloader.ready.connect(self._build)
+        self.preloader.failed.connect(self._failed)
+        self.preloader.progress.connect(self.splash.set_progress)
+        self.preloader.start()
 
-        self.stack = QStackedWidget()
-        self.setCentralWidget(self.stack)
+    @Slot()
+    def _build(self):
+        _mark("preloader ready, building window")
+        from component.main_window import mainWindow
 
-        self.document = DocumentToText()
-        self.tts_engine = None
+        self.window = mainWindow(app)
+        _mark("window built")
+        # Splash reflects 100% once the window is fully constructed; the engine
+        # loads after the window is shown, triggered by its show event.
+        self.splash.set_progress(100, "Ready")
+        self.splash.close_with_fade(self.window, after_ms=100)
 
-        self.init_ui()
-        self.warmup_ai()
+    @Slot(str)
+    def _failed(self, message):
+        self.splash.set_status(f"Startup failed: {message}")
+        print("OLED DESTRO failed to start:", message)
+        QApplication.quit()
 
-    def apply_shadow(self, widget):
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(20)
-        shadow.setXOffset(0)
-        shadow.setYOffset(10)
-        shadow.setColor(QColor(0, 0, 0, 150))
-        widget.setGraphicsEffect(shadow)
 
-    def init_ui(self):
-        # 1. LOADING SCREEN
-        load_page = QFrame(); load_page.setObjectName("LoadPage")
-        l_lay = QVBoxLayout(load_page); l_lay.setAlignment(Qt.AlignCenter)
-        
-        logo = QLabel("O P E N C O D E"); logo.setFont(QFont("Arial", 30, QFont.Bold))
-        self.load_status = QLabel("Waking up AI..."); self.load_status.setStyleSheet("color: #888;")
-        self.bar = QProgressBar(); self.bar.setFixedWidth(300); self.bar.setRange(0, 0)
-        
-        l_lay.addStretch(); l_lay.addWidget(logo, 0, Qt.AlignCenter); l_lay.addSpacing(10)
-        l_lay.addWidget(self.load_status, 0, Qt.AlignCenter); l_lay.addWidget(self.bar, 0, Qt.AlignCenter); l_lay.addStretch()
-        
-        # 2. HOME SCREEN
-        home_page = QFrame(); home_page.setObjectName("MainPage")
-        h_lay = QVBoxLayout(home_page); h_lay.setAlignment(Qt.AlignCenter)
-        
-        welcome = QLabel("Welcome Back"); welcome.setFont(QFont("Arial", 24, QFont.Bold))
-        sub = QLabel("Select a PDF document to start your narration."); sub.setStyleSheet("color: #777;")
-        btn_pick = ButtonHolder("Import Document", self.select_file)
-        
-        h_lay.addStretch(); h_lay.addWidget(welcome, 0, Qt.AlignCenter); h_lay.addWidget(sub, 0, Qt.AlignCenter)
-        h_lay.addSpacing(30); h_lay.addWidget(btn_pick, 0, Qt.AlignCenter); h_lay.addStretch()
+from component.splash_screen import SplashScreen
 
-        # 3. EDITOR SCREEN
-        editor_page = QFrame()
-        e_lay = QVBoxLayout(editor_page); e_lay.setContentsMargins(30, 30, 30, 30)
+splash = SplashScreen()
+splash.show()
+_mark("splash shown")
+controller = StartupController(splash)
 
-        nav = QHBoxLayout()
-        self.title_label = QLabel("New Project"); self.title_label.setFont(QFont("Arial", 16, QFont.Bold))
-        btn_back = ButtonHolder("Close", lambda: self.stack.setCurrentIndex(1))
-        nav.addWidget(self.title_label); nav.addStretch(); nav.addWidget(btn_back)
-
-        self.editor = TextEdit()
-        footer = QHBoxLayout()
-        self.status = QLabel("Ready")
-        self.btn_gen = ButtonHolder("Run Generation", self.generate_audio)
-        footer.addWidget(self.status); footer.addStretch(); footer.addWidget(self.btn_gen)
-
-        e_lay.addLayout(nav); e_lay.addSpacing(20); e_lay.addWidget(self.editor); e_lay.addSpacing(20); e_lay.addLayout(footer)
-
-        self.stack.addWidget(load_page)
-        self.stack.addWidget(home_page)
-        self.stack.addWidget(editor_page)
-
-    def warmup_ai(self):
-        class Loader(QThread):
-            done = Signal(object)
-            def run(self): self.done.emit(TTSEngine())
-        self.loader = Loader(); self.loader.done.connect(self.on_ready); self.loader.start()
-
-    def on_ready(self, engine):
-        self.tts_engine = engine
-        self.stack.setCurrentIndex(1)
-
-    def select_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF (*.pdf)")
-        if path:
-            self.document.process_document(path)
-            self.editor.setPlainText(self.document.full_text)
-            self.title_label.setText(path.split("/")[-1])
-            self.stack.setCurrentIndex(2)
-
-    def generate_audio(self):
-        self.btn_gen.setEnabled(False)
-        self.document.full_text = self.editor.toPlainText()
-        self.worker_thread = QThread()
-        self.worker = GenerationWorker(self.tts_engine, self.document)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker.status_update.connect(self.status.setText)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.finished.connect(lambda: self.btn_gen.setEnabled(True))
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker_thread.start()
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    win = MainApp(); win.show(); sys.exit(app.exec())
+sys.exit(app.exec())

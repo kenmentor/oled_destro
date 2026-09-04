@@ -94,16 +94,9 @@ class SplashScreen(QWidget):
         grad.setColorAt(0.0, QColor("#1B1B1E"))
         grad.setColorAt(1.0, QColor("#0B0B0C"))
         painter.fillPath(path, QBrush(grad))
-        # thin orange accent border
-        border = QColor("#7A310B")
-        painter.setPen(border)
+        # thin neutral border
+        painter.setPen(QColor("#2E2E33"))
         painter.drawPath(path)
-        # vibrant orange accent line across the top edge
-        accent = QColor("#FF6B1A")
-        painter.setPen(accent)
-        painter.drawLine(
-            int(self.width() * 0.18), 2, int(self.width() * 0.82), 2
-        )
 
 
 if __name__ == "__main__":
